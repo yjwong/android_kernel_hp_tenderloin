@@ -84,13 +84,15 @@ int load_565rle_image(char *filename)
 	ptr = data;
 	bits = (unsigned short *)(info->screen_base);
 	while (count > 1) {
-		compressed = *ptr;
+        compressed = *ptr;
 
-		*bits = (from565_r(compressed) << 16) |
-		(from565_g(compressed) << 8) | from565_b(compressed);
+		*bits = (from565_r(compressed) << 16) | 
+			(from565_g(compressed) << 8) | from565_b(compressed);
 		bits += 1;
 		ptr += 1;
 		count -= 2;
+
+        
 	}
 
 err_logo_free_data:
