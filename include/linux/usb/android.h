@@ -62,3 +62,4 @@ struct usb_mass_storage_platform_data {
 	int nluns;
 };
 #endif	/* __LINUX_USB_ANDROID_H */
+
