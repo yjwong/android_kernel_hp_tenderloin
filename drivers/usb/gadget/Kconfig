@@ -559,18 +559,6 @@ config USB_GADGET_DUALSPEED
 	  Means that gadget drivers should include extra descriptors
 	  and code to handle dual-speed controllers.
 
-config USB_GADGET_EVENT
-	boolean "Gadget Event support"
-	depends on USB_GADGET
-	help
-	  This driver is for sending the USB gadget events
-
-config USB_MULTIPLE_CHARGER_DETECT
-	boolean "Multiple USB Wall charger support"
-	depends on USB_GADGET && USB_MSM_72K
-	help
-	  Detect multiple types of USB wall charger
-
 #
 # USB Gadget Drivers
 #
@@ -867,9 +855,32 @@ config USB_ANDROID
 config USB_ANDROID_ACM
 	boolean "Android gadget ACM serial function"
 	depends on USB_ANDROID
+	depends on !(USB_F_SERIAL || USB_F_SERIAL_SDIO || USB_F_SERIAL_SMD)
 	default n
 	help
 	  Provides ACM serial function for android gadget driver.
+
+config USB_ANDROID_ACM_SDIO
+	boolean "generic serial function driver over SDIO"
+	depends on USB_ANDROID && MSM_SDIO_CMUX && MSM_SDIO_AL
+	depends on !(USB_F_SERIAL || USB_F_SERIAL_SDIO || USB_F_SERIAL_SMD)
+	default n
+	help
+	  Gadget ACM serial driver is one way to communicate with
+	  modem device. This option enables ACM driver to communicate
+	  with modem over SDIO.
+          Say "y" to link the driver staticall
+
+config USB_ANDROID_ACM_SMD
+	boolean "generic serial function driver over SMD"
+	depends on USB_ANDROID && MSM_SMD
+	depends on !(USB_F_SERIAL || USB_F_SERIAL_SDIO || USB_F_SERIAL_SMD)
+	default n
+	help
+	  Gadget ACM serial driver is one way to communicate with
+	  modem device. This option enables ACM driver to communicate
+	  with modem over SMD.
+          Say "y" to link the driver statically
 
 config USB_ANDROID_ADB
 	boolean "Android gadget adb function"
@@ -924,6 +935,19 @@ config USB_ANDROID_RNDIS_WCEIS
          If you enable this option, the device is no longer CDC ethernet
          compatible.
 
+config USB_ANDROID_ACCESSORY
+	boolean "Android USB accessory function"
+	depends on USB_ANDROID
+	help
+	  Provides Android USB Accessory support for android gadget driver.
+
+config USB_ANDROID_CCID
+	boolean "Android gadget Smart Card Reader function"
+	depends on USB_ANDROID
+	help
+	  Exposes Character device interface to userspace for bulk and
+	  control.
+
 config USB_ANDROID_RMNET
 	boolean "RmNet function driver"
 	depends on USB_ANDROID
@@ -972,6 +996,38 @@ config RMNET_SDIO_DATA_CHANNEL
        help
          Data SDIO channel for transferring network data
 
+config USB_ANDROID_RMNET_SMD_SDIO
+       boolean "RmNet over SMD/SDIO function driver"
+       depends on USB_ANDROID && MSM_SDIO_CMUX && MSM_SDIO_DMUX
+       default n
+       help
+         Enabling this option adds rmnet over sdio support to the
+         android gadget. Rmnet is an alternative to CDC-ECM
+         and Windows RNDIS. It uses QUALCOMM MSM Interface
+         for control transfers. It acts like a bridge between
+         Host and modem found in MSM chipsets.
+
+config RMNET_SMD_SDIO_CTL_CHANNEL
+       int "control SDIO channel id"
+       depends on USB_ANDROID_RMNET_SMD_SDIO
+       default 8
+       help
+         Control SDIO channel for transferring QMI messages
+
+config RMNET_SMD_SDIO_DATA_CHANNEL
+       int "Data SDIO channel id"
+       default 8
+       depends on USB_ANDROID_RMNET_SMD_SDIO
+       help
+         Data SDIO channel for transferring network data
+
+config RMNET_SDIO_SMD_DATA_CHANNEL
+	string "Data SMD channel name"
+	depends on USB_ANDROID_RMNET_SMD_SDIO
+	default "DATA40"
+	help
+	  Data SMD channel for transferring network data
+
 config USB_F_SERIAL
 	boolean "generic serial function driver"
 	depends on USB_ANDROID
@@ -992,6 +1048,30 @@ config MODEM_SUPPORT
 	  adds CDC descriptors to enumerate the generic serial as MODEM.
 	  adds CDC class requests to configure MODEM line settings.
 	  Say "y" to enable MODEM support in the generic serial driver.
+
+config USB_F_SERIAL_SDIO
+	boolean "generic serial function driver over SDIO"
+	depends on USB_ANDROID && MSM_SDIO_CMUX && MSM_SDIO_AL
+	default n
+	help
+          Gadget serial driver is one way to communicate with modem
+          device. This option enables serial driver to communicate
+          to modem device using sdio. It makes very minimal changes
+          to Gadget usb serial interface(f_serial.c) and adds
+          separate transport layer u_sdio(very similar to u_serial.c)
+          Say "y" to link the driver staticall
+
+config USB_F_SERIAL_SMD
+	boolean "generic serial function driver over SMD"
+	depends on USB_ANDROID && MSM_SMD
+	default n
+	help
+          Gadget serial driver is one way to communicate with modem
+          device. This option enables serial driver to communicate
+          to modem device using smd. It makes very minimal changes
+          to Gadget usb serial interface(f_serial.c) and adds
+          separate transport layer u_smd(very similar to u_serial.c)
+          Say "y" to link the driver statically
 
 config USB_CDC_COMPOSITE
 	tristate "CDC Composite Device (Ethernet and ACM)"
@@ -1070,16 +1150,6 @@ config USB_G_HID
 	  Say "y" to link the driver statically, or "m" to build a
 	  dynamically linked module called "g_hid".
 
-config USB_ROCKHOPPER
-	tristate "Rockhopper Gadget"
-	select USB_CSW_HACK
-	help
-	  The Rockhopper gadget provides ethernet, mass storage,
-	  novacom transport and pass-through.
-
-	  Say "y" to link the driver statically, or "m" to build a
-	  dynamically linked module called "g_rockhopper".
-
 # put drivers that need isochronous transfer support (for audio
 # or video class gadget drivers), or specific hardware, here.
 config USB_G_WEBCAM
@@ -1129,50 +1199,5 @@ config RMNET_SMD_DATA_CHANNEL
 
 
 endchoice
-
-config	USB_ROCKHOPPER_MANUFACTURER_STRING
-	string "USB Manufacturer String"
-	default "Palm Inc."
-	depends on USB_ROCKHOPPER
-	help
-	  Enter the USB Manufacturer ID (String) for Rockhopper Gadget
-
-config	USB_ROCKHOPPER_PRODUCT_STRING
-	string "USB Product String"
-	default "Rockhopper Device"
-	depends on USB_ROCKHOPPER
-	help
-	  Enter the USB Product ID (String) for Rockhopper Gadget
-
-config	USB_ROCKHOPPER_VID
-	hex "USB Vendor ID"
-	default 0x830
-	depends on USB_ROCKHOPPER
-	help
-	  Enter the USB Vendor ID for Rockhopper Gadget
-
-config	USB_ROCKHOPPER_PID_BASE
-	hex "USB Product ID Base (e.g. 0x8000)"
-	default 0x8000
-	depends on USB_ROCKHOPPER
-	help
-	  Enter the USB Product ID Base, which is used to calculate
-	  the product id for each configuration. For example,
-	  if the USB Product ID Base is 0x8000 and the USB Product ID
-	  Shift is 8, the product id for "ums" configuration is
-	  0x8000 + (4 << 8) = 0x8400. "ums+novacom" configuration is
-	  0x8000 + (2 << 8) = 0x8200, etc.
-
-config	USB_ROCKHOPPER_PID_SHIFT
-	int "USB Product ID Shift (Palm style: 0, HP style: 8)"
-	default 0
-	depends on USB_ROCKHOPPER
-	help
-	  Enter the USB Product ID Shift, which is used to calculate
-	  the product id for each configuration. For example,
-	  if the USB Product ID Base is 0x8000 and the USB Product ID
-	  Shift is 8, the product id for "ums" configuration is
-	  0x8000 + (4 << 8) = 0x8400. "ums+novacom" configuration is
-	  0x8000 + (2 << 8) = 0x8200, etc.
 
 endif # USB_GADGET

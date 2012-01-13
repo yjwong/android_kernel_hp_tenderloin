@@ -144,16 +144,16 @@ static struct usb_interface_descriptor rndis_control_intf = {
 	/* .iInterface = DYNAMIC */
 };
 
-static struct usb_cdc_header_desc rndis_header_desc = {
-	.bLength =		sizeof rndis_header_desc,
+static struct usb_cdc_header_desc header_desc = {
+	.bLength =		sizeof header_desc,
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
 	.bDescriptorSubType =	USB_CDC_HEADER_TYPE,
 
 	.bcdCDC =		cpu_to_le16(0x0110),
 };
 
-static struct usb_cdc_call_mgmt_descriptor rndis_call_mgmt_descriptor = {
-	.bLength =		sizeof rndis_call_mgmt_descriptor,
+static struct usb_cdc_call_mgmt_descriptor call_mgmt_descriptor = {
+	.bLength =		sizeof call_mgmt_descriptor,
 	.bDescriptorType =	USB_DT_CS_INTERFACE,
 	.bDescriptorSubType =	USB_CDC_CALL_MANAGEMENT_TYPE,
 
@@ -214,7 +214,7 @@ rndis_iad_descriptor = {
 
 /* full speed support: */
 
-static struct usb_endpoint_descriptor fs_rndis_notify_desc = {
+static struct usb_endpoint_descriptor fs_notify_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -224,7 +224,7 @@ static struct usb_endpoint_descriptor fs_rndis_notify_desc = {
 	.bInterval =		1 << LOG2_STATUS_INTERVAL_MSEC,
 };
 
-static struct usb_endpoint_descriptor fs_rndis_in_desc = {
+static struct usb_endpoint_descriptor fs_in_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -232,7 +232,7 @@ static struct usb_endpoint_descriptor fs_rndis_in_desc = {
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
 };
 
-static struct usb_endpoint_descriptor fs_rndis_out_desc = {
+static struct usb_endpoint_descriptor fs_out_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -244,21 +244,21 @@ static struct usb_descriptor_header *eth_fs_function[] = {
 	(struct usb_descriptor_header *) &rndis_iad_descriptor,
 	/* control interface matches ACM, not Ethernet */
 	(struct usb_descriptor_header *) &rndis_control_intf,
-	(struct usb_descriptor_header *) &rndis_header_desc,
-	(struct usb_descriptor_header *) &rndis_call_mgmt_descriptor,
+	(struct usb_descriptor_header *) &header_desc,
+	(struct usb_descriptor_header *) &call_mgmt_descriptor,
 	(struct usb_descriptor_header *) &rndis_acm_descriptor,
 	(struct usb_descriptor_header *) &rndis_union_desc,
-	(struct usb_descriptor_header *) &fs_rndis_notify_desc,
+	(struct usb_descriptor_header *) &fs_notify_desc,
 	/* data interface has no altsetting */
 	(struct usb_descriptor_header *) &rndis_data_intf,
-	(struct usb_descriptor_header *) &fs_rndis_in_desc,
-	(struct usb_descriptor_header *) &fs_rndis_out_desc,
+	(struct usb_descriptor_header *) &fs_in_desc,
+	(struct usb_descriptor_header *) &fs_out_desc,
 	NULL,
 };
 
 /* high speed support: */
 
-static struct usb_endpoint_descriptor hs_rndis_notify_desc = {
+static struct usb_endpoint_descriptor hs_notify_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -267,7 +267,7 @@ static struct usb_endpoint_descriptor hs_rndis_notify_desc = {
 	.wMaxPacketSize =	cpu_to_le16(STATUS_BYTECOUNT),
 	.bInterval =		LOG2_STATUS_INTERVAL_MSEC + 4,
 };
-static struct usb_endpoint_descriptor hs_rndis_in_desc = {
+static struct usb_endpoint_descriptor hs_in_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -276,7 +276,7 @@ static struct usb_endpoint_descriptor hs_rndis_in_desc = {
 	.wMaxPacketSize =	cpu_to_le16(512),
 };
 
-static struct usb_endpoint_descriptor hs_rndis_out_desc = {
+static struct usb_endpoint_descriptor hs_out_desc = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -289,15 +289,15 @@ static struct usb_descriptor_header *eth_hs_function[] = {
 	(struct usb_descriptor_header *) &rndis_iad_descriptor,
 	/* control interface matches ACM, not Ethernet */
 	(struct usb_descriptor_header *) &rndis_control_intf,
-	(struct usb_descriptor_header *) &rndis_header_desc,
-	(struct usb_descriptor_header *) &rndis_call_mgmt_descriptor,
+	(struct usb_descriptor_header *) &header_desc,
+	(struct usb_descriptor_header *) &call_mgmt_descriptor,
 	(struct usb_descriptor_header *) &rndis_acm_descriptor,
 	(struct usb_descriptor_header *) &rndis_union_desc,
-	(struct usb_descriptor_header *) &hs_rndis_notify_desc,
+	(struct usb_descriptor_header *) &hs_notify_desc,
 	/* data interface has no altsetting */
 	(struct usb_descriptor_header *) &rndis_data_intf,
-	(struct usb_descriptor_header *) &hs_rndis_in_desc,
-	(struct usb_descriptor_header *) &hs_rndis_out_desc,
+	(struct usb_descriptor_header *) &hs_in_desc,
+	(struct usb_descriptor_header *) &hs_out_desc,
 	NULL,
 };
 
@@ -379,8 +379,7 @@ static void rndis_response_complete(struct usb_ep *ep, struct usb_request *req)
 	case -ECONNRESET:
 	case -ESHUTDOWN:
 		/* connection gone */
-		if (ep == rndis->notify)
-			atomic_set(&rndis->notify_count, 0);
+		atomic_set(&rndis->notify_count, 0);
 		break;
 	default:
 		DBG(cdev, "RNDIS %s response error %d, %d/%d\n",
@@ -651,13 +650,13 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 	status = -ENODEV;
 
 	/* allocate instance-specific endpoints */
-	ep = usb_ep_autoconfig(cdev->gadget, &fs_rndis_in_desc);
+	ep = usb_ep_autoconfig(cdev->gadget, &fs_in_desc);
 	if (!ep)
 		goto fail;
 	rndis->port.in_ep = ep;
 	ep->driver_data = cdev;	/* claim */
 
-	ep = usb_ep_autoconfig(cdev->gadget, &fs_rndis_out_desc);
+	ep = usb_ep_autoconfig(cdev->gadget, &fs_out_desc);
 	if (!ep)
 		goto fail;
 	rndis->port.out_ep = ep;
@@ -667,7 +666,7 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 	 * optional.  We don't treat it that way though!  It's simpler,
 	 * and some newer profiles don't treat it as optional.
 	 */
-	ep = usb_ep_autoconfig(cdev->gadget, &fs_rndis_notify_desc);
+	ep = usb_ep_autoconfig(cdev->gadget, &fs_notify_desc);
 	if (!ep)
 		goto fail;
 	rndis->notify = ep;
@@ -692,23 +691,23 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 		goto fail;
 
 	rndis->fs.in = usb_find_endpoint(eth_fs_function,
-			f->descriptors, &fs_rndis_in_desc);
+			f->descriptors, &fs_in_desc);
 	rndis->fs.out = usb_find_endpoint(eth_fs_function,
-			f->descriptors, &fs_rndis_out_desc);
+			f->descriptors, &fs_out_desc);
 	rndis->fs.notify = usb_find_endpoint(eth_fs_function,
-			f->descriptors, &fs_rndis_notify_desc);
+			f->descriptors, &fs_notify_desc);
 
 	/* support all relevant hardware speeds... we expect that when
 	 * hardware is dual speed, all bulk-capable endpoints work at
 	 * both speeds
 	 */
 	if (gadget_is_dualspeed(c->cdev->gadget)) {
-		hs_rndis_in_desc.bEndpointAddress =
-				fs_rndis_in_desc.bEndpointAddress;
-		hs_rndis_out_desc.bEndpointAddress =
-				fs_rndis_out_desc.bEndpointAddress;
-		hs_rndis_notify_desc.bEndpointAddress =
-				fs_rndis_notify_desc.bEndpointAddress;
+		hs_in_desc.bEndpointAddress =
+				fs_in_desc.bEndpointAddress;
+		hs_out_desc.bEndpointAddress =
+				fs_out_desc.bEndpointAddress;
+		hs_notify_desc.bEndpointAddress =
+				fs_notify_desc.bEndpointAddress;
 
 		/* copy descriptors, and track endpoint copies */
 		f->hs_descriptors = usb_copy_descriptors(eth_hs_function);
@@ -717,11 +716,11 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 			goto fail;
 
 		rndis->hs.in = usb_find_endpoint(eth_hs_function,
-				f->hs_descriptors, &hs_rndis_in_desc);
+				f->hs_descriptors, &hs_in_desc);
 		rndis->hs.out = usb_find_endpoint(eth_hs_function,
-				f->hs_descriptors, &hs_rndis_out_desc);
+				f->hs_descriptors, &hs_out_desc);
 		rndis->hs.notify = usb_find_endpoint(eth_hs_function,
-				f->hs_descriptors, &hs_rndis_notify_desc);
+				f->hs_descriptors, &hs_notify_desc);
 	}
 
 	rndis->port.open = rndis_open;
@@ -742,9 +741,6 @@ rndis_bind(struct usb_configuration *c, struct usb_function *f)
 			goto fail;
 	}
 #endif
-
-	if (rndis_set_param_vendor(rndis->config, 0, "rockhopper"))/* REVISIT */
-		goto fail;
 
 	/* NOTE:  all that is done without knowing or caring about
 	 * the network link ... which is unavailable to this code
@@ -797,7 +793,6 @@ rndis_unbind(struct usb_configuration *c, struct usb_function *f)
 	usb_ep_free_request(rndis->notify, rndis->notify_req);
 
 	kfree(rndis);
-	rndis_string_defs[0].id = 0;
 }
 
 /* Some controllers can't support RNDIS ... */

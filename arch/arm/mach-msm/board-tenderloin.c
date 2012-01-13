@@ -110,6 +110,8 @@
 #ifdef CONFIG_USB_ANDROID
 #include <linux/usb/android_composite.h>
 #endif
+#include <linux/usb/f_accessory.h>
+#include <mach/usb_gadget_fserial.h>
 
 #include "devices.h"
 #include "devices-msm8x60.h"
@@ -129,7 +131,6 @@
 #include <linux/notifier.h>
 #include <linux/reboot.h>
 #include <linux/mdmgpio.h>
-#include <mach/htc_usb.h>
 
 
 #ifdef CONFIG_MAX8903B_CHARGER
@@ -816,6 +817,128 @@ static irqreturn_t pmic_id_on_irq(int irq, void *data)
 }
 
 #ifdef CONFIG_USB_ANDROID
+static char *usb_functions_default[] = {
+	"diag",
+	"modem",
+	"nmea",
+	"rmnet",
+	"usb_mass_storage",
+};
+
+static char *usb_functions_default_adb[] = {
+	"diag",
+	"adb",
+	"modem",
+	"nmea",
+	"rmnet",
+	"usb_mass_storage",
+};
+
+
+static char *usb_functions_rndis[] = {
+	"rndis",
+	"diag",
+};
+
+static char *usb_functions_rndis_adb[] = {
+	"rndis",
+	"diag",
+	"adb",
+};
+
+static char *usb_functions_mtp[] = {
+	"mtp",
+};
+
+static char *usb_functions_mtp_adb[] = {
+	"mtp",
+	"adb",
+};
+
+#ifdef CONFIG_USB_ANDROID_ACCESSORY
+static char *usb_functions_accessory[] = {
+	"accessory",
+};
+
+static char *usb_functions_accessory_adb[] = {
+	"accessory",
+	"adb",
+};
+#endif
+
+static char *usb_functions_all[] = {
+#ifdef CONFIG_USB_ANDROID_RNDIS
+	"rndis",
+#endif
+#ifdef CONFIG_USB_ANDROID_ACCESSORY
+	"accessory",
+#endif
+#ifdef CONFIG_USB_ANDROID_DIAG
+	"diag",
+#endif
+#ifdef CONFIG_USB_ANDROID_MTP
+	"mtp",
+#endif
+	"adb",
+#ifdef CONFIG_USB_F_SERIAL
+	"modem",
+	"nmea",
+#endif
+#ifdef CONFIG_USB_ANDROID_RMNET
+	"rmnet",
+#endif
+	"usb_mass_storage",
+#ifdef CONFIG_USB_ANDROID_ACM
+	"acm",
+#endif
+};
+
+static struct android_usb_product usb_products[] = {
+	{
+		.product_id	= 0x9026,
+		.num_functions	= ARRAY_SIZE(usb_functions_default),
+		.functions	= usb_functions_default,
+	},
+	{
+		.product_id	= 0x9025,
+		.num_functions	= ARRAY_SIZE(usb_functions_default_adb),
+		.functions	= usb_functions_default_adb,
+	},
+	{
+		.product_id	= 0x902c,
+		.num_functions	= ARRAY_SIZE(usb_functions_rndis),
+		.functions	= usb_functions_rndis,
+	},
+	{
+		.product_id	= 0x902d,
+		.num_functions	= ARRAY_SIZE(usb_functions_rndis_adb),
+		.functions	= usb_functions_rndis_adb,
+	},
+	{
+		.product_id	= 0xF003,
+		.num_functions	= ARRAY_SIZE(usb_functions_mtp),
+		.functions	= usb_functions_mtp,
+	},
+	{
+		.product_id	= 0x9039,
+		.num_functions	= ARRAY_SIZE(usb_functions_mtp_adb),
+		.functions	= usb_functions_mtp_adb,
+	},
+#ifdef CONFIG_USB_ANDROID_ACCESSORY
+	{
+		.vendor_id	= USB_ACCESSORY_VENDOR_ID,
+		.product_id	= USB_ACCESSORY_PRODUCT_ID,
+		.num_functions	= ARRAY_SIZE(usb_functions_accessory),
+		.functions	= usb_functions_accessory,
+	},
+	{
+		.vendor_id	= USB_ACCESSORY_VENDOR_ID,
+		.product_id	= USB_ACCESSORY_ADB_PRODUCT_ID,
+		.num_functions	= ARRAY_SIZE(usb_functions_accessory_adb),
+		.functions	= usb_functions_accessory_adb,
+	},
+#endif
+};
 
 static struct usb_ether_platform_data rndis_pdata = {
 	/* ethaddr is filled by board_serialno_setup */
@@ -3892,6 +4015,17 @@ static struct platform_device *tenderloin_devices[] __initdata = {
 #ifdef CONFIG_USB_GADGET_MSM_72K
 	&msm_device_gadget_peripheral,
 #endif
+#ifdef CONFIG_USB_ANDROID
+	&usb_mass_storage_device,
+	&rndis_device,
+#ifdef CONFIG_USB_ANDROID_DIAG
+	&usb_diag_device,
+#endif
+#ifdef CONFIG_USB_F_SERIAL
+	&usb_gadget_fserial_device,
+#endif
+	&android_usb_device,
+#endif
 #ifdef CONFIG_BATTERY_MSM
 	&msm_batt_device,
 #endif
@@ -6937,15 +7071,6 @@ static void __init msm8x60_init(struct msm_board_data *board_data)
 		msm8x60_cfg_isp1763();
 		isp1763_modem_poweron(1);
 	}
-#endif
-
-#ifdef CONFIG_USB_ANDROID
-    platform_device_register(&usb_diag_device);
-    android_usb_pdata.products[0].product_id =
-		android_usb_pdata.product_id;
-    platform_device_register(&usb_mass_storage_device);
-    platform_device_register(&rndis_device);
-    platform_device_register(&android_usb_device);
 #endif
 
 	if (boardtype_is_3g())

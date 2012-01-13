@@ -292,7 +292,6 @@
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
-#include <linux/usb/gadget_event.h>
 
 #include "gadget_chips.h"
 
@@ -300,10 +299,10 @@
 #include <linux/usb/android_composite.h>
 #include <linux/platform_device.h>
 #endif
-#ifdef USE_ROCKHOPPER_CLASS_PARENT
-#define USE_ROCKHOPPER_MEDIASYNC_STUB //temporary until storaged is fixed.
-#include "rockhopper.h"
-#endif
+
+static ulong fsg_nofua = 1;
+module_param(fsg_nofua, ulong, S_IRUGO);
+MODULE_PARM_DESC(fsg_nofua, "FUA Flag state in SCSI WRITE");
 
 #define FUNCTION_NAME		"usb_mass_storage"
 /*------------------------------------------------------------------------*/
@@ -391,9 +390,6 @@ struct fsg_common {
 	char inquiry_string[8 + 16 + 4 + 1];
 
 	struct kref		ref;
-#ifdef USE_ROCKHOPPER_CLASS_PARENT
-	struct device		*parent;
-#endif
 };
 
 
@@ -898,7 +894,7 @@ static int do_write(struct fsg_common *common)
 			curlun->sense_data = SS_INVALID_FIELD_IN_CDB;
 			return -EINVAL;
 		}
-		if (!curlun->nofua && (common->cmnd[1] & 0x08)) {	/* FUA */
+		if (!curlun->nofua && (common->cmnd[1] & 0x08)) {/* FUA */
 			spin_lock(&curlun->filp->f_lock);
 			curlun->filp->f_flags |= O_SYNC;
 			spin_unlock(&curlun->filp->f_lock);
@@ -1417,7 +1413,7 @@ static int do_mode_sense(struct fsg_common *common, struct fsg_buffhd *bh)
 		memset(buf+2, 0, 10);	/* None of the fields are changeable */
 
 		if (!changeable_values) {
-			buf[2] = 0x00;	/* Write cache disable, */
+			buf[2] = 0x04;	/* Write cache enable, */
 					/* Read cache not disabled */
 					/* No cache retention priorities */
 			put_unaligned_be16(0xffff, &buf[4]);
@@ -2474,9 +2470,6 @@ static int fsg_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	clear_bit(IGNORE_BULK_OUT, &fsg->atomic_bitflags);
 	fsg->common->new_fsg = fsg;
 	raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
-#ifdef CONFIG_USB_GADGET_EVENT
-	gadget_event_host_connected_async(1, HZ);
-#endif
 	return 0;
 }
 
@@ -2497,9 +2490,6 @@ static void fsg_disable(struct usb_function *f)
 	}
 	fsg->common->new_fsg = NULL;
 	raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
-#ifdef CONFIG_USB_GADGET_EVENT
-	gadget_event_host_connected_async(0, HZ);
-#endif
 }
 
 
@@ -2742,18 +2732,7 @@ static int fsg_main_thread(void *common_)
 /* Write permission is checked per LUN in store_*() functions. */
 static DEVICE_ATTR(ro, 0644, fsg_show_ro, fsg_store_ro);
 static DEVICE_ATTR(file, 0644, fsg_show_file, fsg_store_file);
-
-#ifdef USE_ROCKHOPPER_MEDIASYNC_STUB
-static ssize_t store_mediasync_mode(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
-{
-	return count;
-}
-static ssize_t show_mediasync_mode(struct device *dev, struct device_attribute *attr, char *buf)
-{
-	return sprintf(buf, "0\n");
-}
-static DEVICE_ATTR(mediasync_mode, 0644, show_mediasync_mode, store_mediasync_mode);
-#endif
+static DEVICE_ATTR(nofua, 0644, fsg_show_nofua, fsg_store_nofua);
 
 /****************************** FSG COMMON ******************************/
 
@@ -2804,15 +2783,6 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
 		common->free_storage_on_release = 0;
 	}
 
-#ifdef USE_ROCKHOPPER_CLASS_PARENT
-	common->parent = rockhopper_create_device("ums");
-	if (IS_ERR(common->parent)) {
-		dev_err(&gadget->dev, "device_create error\n");
-		rc = -EINVAL;
-		goto error_release;
-	}
-#endif
-
 	common->private_data = cfg->private_data;
 
 	common->gadget = gadget;
@@ -2844,17 +2814,11 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
 		curlun->ro = lcfg->cdrom || lcfg->ro;
 		curlun->removable = lcfg->removable;
 		curlun->dev.release = fsg_lun_release;
-#if defined(CONFIG_USB_ROCKHOPPER)
-		curlun->nofua = 1;
-#else
 		curlun->nofua = lcfg->nofua;
-#endif
 
 #ifdef CONFIG_USB_ANDROID_MASS_STORAGE
 		/* use "usb_mass_storage" platform device as parent */
 		curlun->dev.parent = &cfg->pdev->dev;
-#elif defined(USE_ROCKHOPPER_CLASS_PARENT)
-		curlun->dev.parent = common->parent;
 #else
 		curlun->dev.parent = &gadget->dev;
 #endif
@@ -2879,11 +2843,9 @@ static struct fsg_common *fsg_common_init(struct fsg_common *common,
 		rc = device_create_file(&curlun->dev, &dev_attr_file);
 		if (rc)
 			goto error_luns;
-#ifdef USE_ROCKHOPPER_MEDIASYNC_STUB
-		rc = device_create_file(&curlun->dev, &dev_attr_mediasync_mode);
+		rc = device_create_file(&curlun->dev, &dev_attr_nofua);
 		if (rc)
 			goto error_luns;
-#endif
 
 		if (lcfg->filename) {
 			rc = fsg_lun_open(curlun, lcfg->filename);
@@ -3028,23 +2990,16 @@ static void fsg_common_release(struct kref *ref)
 
 		/* In error recovery common->nluns may be zero. */
 		for (; i; --i, ++lun) {
+			device_remove_file(&lun->dev, &dev_attr_nofua);
 			device_remove_file(&lun->dev, &dev_attr_ro);
 			device_remove_file(&lun->dev, &dev_attr_file);
-#ifdef USE_ROCKHOPPER_MEDIASYNC_STUB
-			device_remove_file(&lun->dev, &dev_attr_mediasync_mode);
-#endif
 			fsg_lun_close(lun);
 			device_unregister(&lun->dev);
 		}
 
 		kfree(common->luns);
 	}
-#ifdef USE_ROCKHOPPER_CLASS_PARENT
-	if (common->parent) {
-		rockhopper_destroy_device(common->parent);
-		common->parent = NULL;
-	}
-#endif
+
 	{
 		struct fsg_buffhd *bh = common->buffhds;
 		unsigned i = FSG_NUM_BUFFERS;
@@ -3067,7 +3022,6 @@ static void fsg_unbind(struct usb_configuration *c, struct usb_function *f)
 	struct fsg_common	*common = fsg->common;
 
 	DBG(fsg, "unbind\n");
-
 	if (fsg->common->fsg == fsg) {
 		fsg->common->new_fsg = NULL;
 		raise_exception(fsg->common, FSG_STATE_CONFIG_CHANGE);
@@ -3080,10 +3034,6 @@ static void fsg_unbind(struct usb_configuration *c, struct usb_function *f)
 	usb_free_descriptors(fsg->function.hs_descriptors);
 	switch_dev_unregister(&fsg->sdev);
 	kfree(fsg);
-
-#ifdef CONFIG_USB_GADGET_EVENT
-	gadget_event_enable_storage_events(0);
-#endif
 }
 
 
@@ -3096,9 +3046,6 @@ static int fsg_bind(struct usb_configuration *c, struct usb_function *f)
 
 	fsg->gadget = gadget;
 
-#ifdef CONFIG_USB_GADGET_EVENT
-	gadget_event_enable_storage_events(1);
-#endif
 	/* New interface */
 	i = usb_interface_id(c, f);
 	if (i < 0)
@@ -3284,10 +3231,6 @@ fsg_config_from_params(struct fsg_config *cfg,
 
 	cfg->thread_exits = 0;
 	cfg->private_data = 0;
-#if defined(CONFIG_USB_ROCKHOPPER)
-	cfg->vendor_name = CONFIG_USB_ROCKHOPPER_MANUFACTURER_STRING;
-	cfg->product_name = CONFIG_USB_ROCKHOPPER_PRODUCT_STRING;
-#endif
 
 	/* Finalise */
 	cfg->can_stall = params->stall;
@@ -3327,7 +3270,7 @@ static int fsg_probe(struct platform_device *pdev)
 	fsg_cfg.nluns = nluns;
 	for (i = 0; i < nluns; i++) {
 		fsg_cfg.luns[i].removable = 1;
-		fsg_cfg.luns[i].nofua = 1;
+		fsg_cfg.luns[i].nofua = fsg_nofua;
 	}
 	fsg_cfg.vendor_name = pdata->vendor;
 	fsg_cfg.product_name = pdata->product;

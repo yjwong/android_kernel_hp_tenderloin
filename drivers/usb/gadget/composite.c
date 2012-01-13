@@ -38,7 +38,7 @@
  */
 
 /* big enough to hold our biggest descriptor */
-#define USB_BUFSIZ	1024
+#define USB_BUFSIZ	4096
 
 static struct usb_composite_driver *composite;
 
@@ -87,10 +87,14 @@ static ssize_t enable_store(
 	struct usb_function *f = dev_get_drvdata(dev);
 	struct usb_composite_driver	*driver = f->config->cdev->driver;
 	int value;
+	int rc;
 
 	sscanf(buf, "%d", &value);
-	if (driver->enable_function)
-		driver->enable_function(f, value);
+	if (driver->enable_function) {
+		rc = driver->enable_function(f, value);
+		if (rc < 0)
+			return rc;
+	}
 	else
 		usb_function_set_enabled(f, value);
 
@@ -112,10 +116,7 @@ void usb_composite_force_reset(struct usb_composite_dev *cdev)
 
 	spin_lock_irqsave(&cdev->lock, flags);
 	/* force reenumeration */
-	if (cdev && cdev->gadget &&
-			cdev->gadget->speed != USB_SPEED_UNKNOWN) {
-		/* avoid sending a disconnect switch event until after we disconnect */
-		cdev->mute_switch = 1;
+	if (cdev && cdev->gadget && cdev->gadget->speed != USB_SPEED_UNKNOWN) {
 		spin_unlock_irqrestore(&cdev->lock, flags);
 
 		usb_gadget_disconnect(cdev->gadget);
@@ -151,8 +152,7 @@ int usb_add_function(struct usb_configuration *config,
 			function->name, function,
 			config->label, config);
 
-	if ((!function->set_alt && !function->set_alt_async) ||
-	    !function->disable)
+	if (!function->set_alt || !function->disable)
 		goto done;
 
 	index = atomic_inc_return(&cdev->driver->function_count);
@@ -351,6 +351,13 @@ static int config_buf(struct usb_configuration *config,
 		dest = next;
 		while ((descriptor = *descriptors++) != NULL) {
 			intf = (struct usb_interface_descriptor *)dest;
+			if (intf->bDescriptorType ==
+					USB_DT_INTERFACE_ASSOCIATION) {
+				struct usb_interface_assoc_descriptor *iad =
+				  (struct usb_interface_assoc_descriptor *)dest;
+
+				iad->bFirstInterface = interfaceCount;
+			}
 			if (intf->bDescriptorType == USB_DT_INTERFACE) {
 				/* don't increment bInterfaceNumber for alternate settings */
 				if (intf->bAlternateSetting == 0)
@@ -470,14 +477,16 @@ static void reset_config(struct usb_composite_dev *cdev)
 }
 
 static int set_config(struct usb_composite_dev *cdev,
-		      const struct usb_ctrlrequest *ctrl, unsigned number,
-		      int *delayed_status)
+		const struct usb_ctrlrequest *ctrl, unsigned number)
 {
 	struct usb_gadget	*gadget = cdev->gadget;
 	struct usb_configuration *c = NULL;
 	int			result = -EINVAL;
 	unsigned		power = gadget_is_otg(gadget) ? 8 : 100;
 	int			tmp;
+
+	if (cdev->config)
+		reset_config(cdev);
 
 	if (number) {
 		list_for_each_entry(c, &cdev->configs, list) {
@@ -499,21 +508,6 @@ static int set_config(struct usb_composite_dev *cdev,
 		case USB_SPEED_HIGH:	speed = "high"; break;
 		default:		speed = "?"; break;
 		} ; speed; }), number, c ? c->label : "unconfigured");
-
-	/* if we are already in the specified configration, do nothing */
-	if (cdev->config == c)
-		goto noop;
-
-	if (cdev->config) {
-		struct usb_function	*f;
-
-		list_for_each_entry(f, &cdev->config->functions, list) {
-			if (f->set_alt || (!c && f->set_alt_async))
-				if (f->disable)
-					f->disable(f);
-		}
-		cdev->config = NULL;
-	}
 
 	if (!c)
 		goto done;
@@ -554,13 +548,7 @@ static int set_config(struct usb_composite_dev *cdev,
 			set_bit(addr, f->endpoints);
 		}
 
-		if (f->set_alt)
-			result = f->set_alt(f, tmp, 0);
-		else if (f->set_alt_async) {
-			result = f->set_alt_async(f, tmp, 0);
-			if (result >= 0)
-				*delayed_status = 1;
-		}
+		result = f->set_alt(f, tmp, 0);
 		if (result < 0) {
 			DBG(cdev, "interface %d (%s/%p) alt 0 --> %d\n",
 					tmp, f->name, f, result);
@@ -576,7 +564,6 @@ done:
 	usb_gadget_vbus_draw(gadget, power);
 
 	schedule_work(&cdev->switch_work);
-noop:
 	return result;
 }
 
@@ -599,7 +586,6 @@ int usb_add_config(struct usb_composite_dev *cdev,
 {
 	int				status = -EINVAL;
 	struct usb_configuration	*c;
-	unsigned	i;
 
 	DBG(cdev, "adding config #%u '%s'/%p\n",
 			config->bConfigurationValue,
@@ -621,14 +607,14 @@ int usb_add_config(struct usb_composite_dev *cdev,
 
 	INIT_LIST_HEAD(&config->functions);
 	config->next_interface_id = 0;
-	for (i = 0; i < MAX_CONFIG_INTERFACES; i++)
-		config->interface[i] = NULL;
 
 	status = config->bind(config);
 	if (status < 0) {
 		list_del(&config->list);
 		config->cdev = NULL;
 	} else {
+		unsigned	i;
+
 		DBG(cdev, "cfg %d/%p speeds:%s%s\n",
 			config->bConfigurationValue, config,
 			config->highspeed ? " high" : "",
@@ -804,31 +790,6 @@ int usb_string_id(struct usb_composite_dev *cdev)
 
 /*-------------------------------------------------------------------------*/
 
-static unsigned int	composite_ep0_req_tag;
-
-static void composite_ep0_req_tag_inc(void)
-{
-	++composite_ep0_req_tag;
-}
-
-int composite_ep0_req_tag_get(void)
-{
-	return composite_ep0_req_tag;
-}
-
-int composite_ep0_queue(struct usb_composite_dev *cdev)
-{
-	int	rc;
-
-	rc = usb_ep_queue(cdev->gadget->ep0, cdev->req, GFP_ATOMIC);
-	if (rc != 0 && rc != -ESHUTDOWN) {
-		/* We can't do much more than wait for a reset */
-		WARNING(cdev, "error in submission: %s --> %d\n",
-			cdev->gadget->ep0->name, rc);
-	}
-	return rc;
-}
-
 static void composite_setup_complete(struct usb_ep *ep, struct usb_request *req)
 {
 	if (req->status || req->actual != req->length)
@@ -858,7 +819,14 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	u8				endp;
 	int tmp = intf;
 	int id = 0;
-	int				delayed_status = 0;
+	unsigned long			flags;
+
+	spin_lock_irqsave(&cdev->lock, flags);
+	if (!cdev->connected) {
+		cdev->connected = 1;
+		schedule_work(&cdev->switch_work);
+	}
+	spin_unlock_irqrestore(&cdev->lock, flags);
 
 	/* partial re-init of the response message; the function or the
 	 * gadget might need to intercept e.g. a control-OUT completion
@@ -868,8 +836,6 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	req->complete = composite_setup_complete;
 	req->length = USB_BUFSIZ;
 	gadget->ep0->driver_data = cdev;
-
-	composite_ep0_req_tag_inc();
 
 	switch (ctrl->bRequest) {
 
@@ -938,7 +904,7 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 				VDBG(cdev, "HNP inactive\n");
 		}
 		spin_lock(&cdev->lock);
-		value = set_config(cdev, ctrl, w_value, &delayed_status);
+		value = set_config(cdev, ctrl, w_value);
 		spin_unlock(&cdev->lock);
 		break;
 	case USB_REQ_GET_CONFIGURATION:
@@ -962,15 +928,9 @@ composite_setup(struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 		f = cdev->config->interface[intf];
 		if (!f)
 			break;
-		if (w_value) {
-			if (f->set_alt)
-				value = f->set_alt(f, w_index, w_value);
-			else if (f->set_alt_async) {
-				value = f->set_alt_async(f, w_index, w_value);
-				if (value >= 0)
-					delayed_status = 1;
-			}
-		}
+		if (w_value && !f->set_alt)
+			break;
+		value = f->set_alt(f, w_index, w_value);
 		break;
 	case USB_REQ_GET_INTERFACE:
 		if (ctrl->bRequestType != (USB_DIR_IN|USB_RECIP_INTERFACE))
@@ -1073,13 +1033,11 @@ unknown:
 	if (value >= 0) {
 		req->length = value;
 		req->zero = value < w_length;
-		if (!delayed_status) {
-			value = usb_ep_queue(gadget->ep0, req, GFP_ATOMIC);
-			if (value < 0) {
-				DBG(cdev, "ep_queue --> %d\n", value);
-				req->status = 0;
-				composite_setup_complete(gadget->ep0, req);
-			}
+		value = usb_ep_queue(gadget->ep0, req, GFP_ATOMIC);
+		if (value < 0) {
+			DBG(cdev, "ep_queue --> %d\n", value);
+			req->status = 0;
+			composite_setup_complete(gadget->ep0, req);
 		}
 	}
 
@@ -1100,10 +1058,8 @@ static void composite_disconnect(struct usb_gadget *gadget)
 	if (cdev->config)
 		reset_config(cdev);
 
-	if (cdev->mute_switch)
-		cdev->mute_switch = 0;
-	else
-		schedule_work(&cdev->switch_work);
+	cdev->connected = 0;
+	schedule_work(&cdev->switch_work);
 	spin_unlock_irqrestore(&cdev->lock, flags);
 }
 
@@ -1169,8 +1125,8 @@ composite_unbind(struct usb_gadget *gadget)
 		kfree(cdev->req->buf);
 		usb_ep_free_request(gadget->ep0, cdev->req);
 	}
-
-	switch_dev_unregister(&cdev->sdev);
+	switch_dev_unregister(&cdev->sw_connected);
+	switch_dev_unregister(&cdev->sw_config);
 	kfree(cdev);
 	set_gadget_data(gadget, NULL);
 	device_remove_file(&gadget->dev, &dev_attr_suspended);
@@ -1205,11 +1161,22 @@ composite_switch_work(struct work_struct *data)
 	struct usb_composite_dev	*cdev =
 		container_of(data, struct usb_composite_dev, switch_work);
 	struct usb_configuration *config = cdev->config;
+	int connected;
+	unsigned long flags;
+
+	spin_lock_irqsave(&cdev->lock, flags);
+	if (cdev->connected != cdev->sw_connected.state) {
+		connected = cdev->connected;
+		spin_unlock_irqrestore(&cdev->lock, flags);
+		switch_set_state(&cdev->sw_connected, connected);
+	} else {
+		spin_unlock_irqrestore(&cdev->lock, flags);
+	}
 
 	if (config)
-		switch_set_state(&cdev->sdev, config->bConfigurationValue);
+		switch_set_state(&cdev->sw_config, config->bConfigurationValue);
 	else
-		switch_set_state(&cdev->sdev, 0);
+		switch_set_state(&cdev->sw_config, 0);
 }
 
 static int composite_bind(struct usb_gadget *gadget)
@@ -1247,14 +1214,6 @@ static int composite_bind(struct usb_gadget *gadget)
 	 */
 	usb_ep_autoconfig_reset(cdev->gadget);
 
-	/* standardized runtime overrides for device ID data */
-	if (idVendor)
-		cdev->desc.idVendor = cpu_to_le16(idVendor);
-	if (idProduct)
-		cdev->desc.idProduct = cpu_to_le16(idProduct);
-	if (bcdDevice)
-		cdev->desc.bcdDevice = cpu_to_le16(bcdDevice);
-
 	/* composite gadget needs to assign strings for whole device (like
 	 * serial number), register function drivers, potentially update
 	 * power state and consumption, etc
@@ -1263,14 +1222,26 @@ static int composite_bind(struct usb_gadget *gadget)
 	if (status < 0)
 		goto fail;
 
-	cdev->sdev.name = "usb_configuration";
-	status = switch_dev_register(&cdev->sdev);
+	cdev->sw_connected.name = "usb_connected";
+	status = switch_dev_register(&cdev->sw_connected);
+	if (status < 0)
+		goto fail;
+	cdev->sw_config.name = "usb_configuration";
+	status = switch_dev_register(&cdev->sw_config);
 	if (status < 0)
 		goto fail;
 	INIT_WORK(&cdev->switch_work, composite_switch_work);
 
 	cdev->desc = *composite->dev;
 	cdev->desc.bMaxPacketSize0 = gadget->ep0->maxpacket;
+
+	/* standardized runtime overrides for device ID data */
+	if (idVendor)
+		cdev->desc.idVendor = cpu_to_le16(idVendor);
+	if (idProduct)
+		cdev->desc.idProduct = cpu_to_le16(idProduct);
+	if (bcdDevice)
+		cdev->desc.bcdDevice = cpu_to_le16(bcdDevice);
 
 	/* strings can't be assigned before bind() allocates the
 	 * releavnt identifiers

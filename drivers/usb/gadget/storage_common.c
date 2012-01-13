@@ -633,9 +633,6 @@ static int fsg_lun_open(struct fsg_lun *curlun, const char *filename)
 	curlun->num_sectors = num_sectors;
 	LDBG(curlun, "open backing file: %s\n", filename);
 	rc = 0;
-#ifdef CONFIG_USB_GADGET_EVENT
-	gadget_event_media_loaded(1);
-#endif
 
 out:
 	filp_close(filp, current->files);
@@ -649,9 +646,6 @@ static void fsg_lun_close(struct fsg_lun *curlun)
 		LDBG(curlun, "close backing file\n");
 		fput(curlun->filp);
 		curlun->filp = NULL;
-#ifdef CONFIG_USB_GADGET_EVENT
-		gadget_event_media_loaded(0);
-#endif
 	}
 }
 
@@ -699,6 +693,14 @@ static ssize_t fsg_show_ro(struct device *dev, struct device_attribute *attr,
 	return sprintf(buf, "%d\n", fsg_lun_is_open(curlun)
 				  ? curlun->ro
 				  : curlun->initially_ro);
+}
+
+static ssize_t fsg_show_nofua(struct device *dev, struct device_attribute *attr,
+				char *buf)
+{
+	struct fsg_lun  *curlun = fsg_lun_from_dev(dev);
+
+	return sprintf(buf, "%u\n", curlun->nofua);
 }
 
 static ssize_t fsg_show_file(struct device *dev, struct device_attribute *attr,
@@ -753,6 +755,23 @@ static ssize_t fsg_store_ro(struct device *dev, struct device_attribute *attr,
 	}
 	up_read(filesem);
 	return rc;
+}
+
+static ssize_t fsg_store_nofua(struct device *dev,
+				struct device_attribute *attr,
+				const char *buf, size_t count)
+{
+	struct fsg_lun  *curlun = fsg_lun_from_dev(dev);
+
+	if (strict_strtoul(buf, 2, &fsg_nofua))
+		return -EINVAL;
+
+	/* Sync data when switching from async mode to sync */
+	if (!fsg_nofua && curlun->nofua)
+		fsg_lun_fsync_sub(curlun);
+	curlun->nofua = fsg_nofua;
+
+	return count;
 }
 
 static ssize_t fsg_store_file(struct device *dev, struct device_attribute *attr,
