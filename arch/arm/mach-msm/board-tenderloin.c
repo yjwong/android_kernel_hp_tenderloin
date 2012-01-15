@@ -817,23 +817,14 @@ static irqreturn_t pmic_id_on_irq(int irq, void *data)
 }
 
 #ifdef CONFIG_USB_ANDROID
-static char *usb_functions_default[] = {
-	"diag",
-	"modem",
-	"nmea",
-	"rmnet",
+static char *usb_functions_ums[] = {
 	"usb_mass_storage",
 };
 
-static char *usb_functions_default_adb[] = {
-	"diag",
+static char *usb_functions_adb[] = {
+	"usb_mass_storage",
 	"adb",
-	"modem",
-	"nmea",
-	"rmnet",
-	"usb_mass_storage",
 };
-
 
 static char *usb_functions_rndis[] = {
 	"rndis",
@@ -895,35 +886,39 @@ static char *usb_functions_all[] = {
 
 static struct android_usb_product usb_products[] = {
 	{
-		.product_id	= 0x9026,
-		.num_functions	= ARRAY_SIZE(usb_functions_default),
-		.functions	= usb_functions_default,
+		.product_id	= 0x0c02,
+		.num_functions	= ARRAY_SIZE(usb_functions_adb),
+		.functions	= usb_functions_adb,
 	},
 	{
-		.product_id	= 0x9025,
-		.num_functions	= ARRAY_SIZE(usb_functions_default_adb),
-		.functions	= usb_functions_default_adb,
+		.product_id	= 0x0ff9,
+		.num_functions	= ARRAY_SIZE(usb_functions_ums),
+		.functions	= usb_functions_ums,
 	},
+#ifdef CONFIG_USB_ANDROID_RNDIS
 	{
-		.product_id	= 0x902c,
+		.product_id	= 0x0ffe,
 		.num_functions	= ARRAY_SIZE(usb_functions_rndis),
 		.functions	= usb_functions_rndis,
 	},
 	{
-		.product_id	= 0x902d,
+		.product_id	= 0x0ffc,
 		.num_functions	= ARRAY_SIZE(usb_functions_rndis_adb),
 		.functions	= usb_functions_rndis_adb,
 	},
+#endif
+#ifdef CONFIG_USB_ANDROID_MTP
 	{
-		.product_id	= 0xF003,
+		.product_id	= 0x0c93,
 		.num_functions	= ARRAY_SIZE(usb_functions_mtp),
 		.functions	= usb_functions_mtp,
 	},
 	{
-		.product_id	= 0x9039,
+		.product_id	= 0x0ca8,
 		.num_functions	= ARRAY_SIZE(usb_functions_mtp_adb),
 		.functions	= usb_functions_mtp_adb,
 	},
+#endif
 #ifdef CONFIG_USB_ANDROID_ACCESSORY
 	{
 		.vendor_id	= USB_ACCESSORY_VENDOR_ID,
