@@ -48,6 +48,11 @@ g_hid-objs			:= hid.o
 g_nokia-objs			:= nokia.o
 g_webcam-objs			:= webcam.o
 
+#
+# USB gadget events
+#
+obj-$(CONFIG_USB_GADGET_EVENT)	+= gadget_event.o
+
 obj-$(CONFIG_USB_ZERO)		+= g_zero.o
 obj-$(CONFIG_USB_AUDIO)		+= g_audio.o
 obj-$(CONFIG_USB_ETH)		+= g_ether.o
